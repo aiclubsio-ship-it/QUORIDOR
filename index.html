@@ -117,7 +117,7 @@ function names(){const n=$('#names');n.innerHTML='';for(let i=0;i<4;i++){const f
 function pick(sel,fn){document.querySelectorAll(sel+' button').forEach(b=>b.onclick=()=>{sfx.click();document.querySelectorAll(sel+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');fn(+b.dataset.v)})}
 pick('#pc',v=>{cfg.cnt=v;names()});pick('#sz',v=>cfg.size=v);names();
 $('#b2').onclick=()=>{sfx.click();$('#setup').classList.remove('hidden')};
-$('#bo').onclick=()=>{sfx.click();if(!DB){toast('Online play is unavailable here');return}if(!canW){toast('Ask the owner for Contributor access to play online');return}$('#oname').value=cfg.names[0];showO('menu');$('#online').classList.remove('hidden')};
+$('#bo').onclick=async()=>{sfx.click();if(!DB&&!(await loadPeer())){toast('Online service could not load — check your connection');return}if(!canW){toast('Ask the owner for Contributor access to play online');return}$('#oname').value=cfg.names[0];showO('menu');$('#online').classList.remove('hidden')};
 $('#cancel').onclick=()=>{sfx.click();$('#setup').classList.add('hidden')};
 $('#start').onclick=()=>{sfx.click();$('#setup').classList.add('hidden');start()};
 $('#again').onclick=()=>{sfx.click();$('#win').classList.add('hidden');if(G.online)rematch();else start()};
@@ -181,9 +181,9 @@ function update(){const g=$('#g');g.querySelectorAll('.wall:not(.ghost)').forEac
  G.walls.forEach((pi,k)=>{const e=wallEl(k[0],...k.slice(1).split(',').map(Number));e.style.background=PC[pi];g.append(e)});
  const h=document.createDocumentFragment();renderCtl();G.ps.forEach((p,i)=>{const d=document.createElement('div');d.className='pc'+(i==G.turn&&!G.over?' act':'');d.style.setProperty('--c',PC[i]);d.innerHTML='<b></b><span></span><em>▮ '+p.w+'</em>';d.querySelector('span').textContent=p.name+(G.online&&G.online.me==i?' (you)':'');h.append(d)});
  const cur=G.ps[G.turn],mv=G.over||!myTurn()?[]:moves(cur);cells.forEach((e,i)=>{const r=i/G.n|0,c=i%G.n,ok=mv.some(m=>m[0]==r&&m[1]==c);e.classList.toggle('ok',ok);e.style.setProperty('--c',PC[G.turn])});
- $('#msg').textContent=G.over?'':G.online?(myTurn()?'Your turn — move or place a wall':'Waiting for '+cur.name+'…'):cur.name+"'s turn — move a pawn or place a wall"}
+ $('#msg').textContent=G.over?'':G.online?(myTurn()?'Your turn — move or place a wall':'Waiting for '+cur.name+'… ('+G.ps[1-G.online.me].w+' walls left)'):cur.name+"'s turn — move a pawn or place a wall"}
 /* ---------- Controllers ---------- */
-function renderCtl(){const on=G.online,n=G.ps.length,bi=on?[on.me]:n==4?[0,2]:[0],ti=on?[1-on.me]:n==4?[1,3]:[1];
+function renderCtl(){const on=G.online,n=G.ps.length,bi=on?[on.me]:n==4?[0,2]:[0],ti=on?[]:n==4?[1,3]:[1];
  [['#bot',bi,0],['#top',ti,1]].forEach(([s,ids,tp])=>{const el=$(s);el.innerHTML='';el.classList.toggle('inv',!!tp&&!on);
   ids.forEach(i=>{const p=G.ps[i],act=i==G.turn&&!G.over,mine=!on||on.me==i,d=document.createElement('div');d.className='ctl'+(act?' act':'');d.style.setProperty('--c',PC[i]);
    d.innerHTML='<div class="pc"><b></b><div style="min-width:0;flex:1"><span></span><div class="tl"></div></div></div><div class="ob2"><button class="ob" data-o="h">— Horizontal</button><button class="ob" data-o="v">| Vertical</button></div>';
@@ -200,10 +200,10 @@ const oname=()=>($('#oname').value.trim()||'Player');
 $('#o-back').onclick=()=>{sfx.click();$('#online').classList.add('hidden')};
 $('#o-create').onclick=()=>{sfx.click();showO('c')};$('#o-join').onclick=()=>{sfx.click();showO('j');$('#ocode').value=''};
 $('#o-cb').onclick=$('#o-jb').onclick=()=>{sfx.click();showO('menu')};
-$('#o-go').onclick=async()=>{sfx.click();const ab='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';try{let code,ref;for(let t=0;t<6;t++){code=Array.from({length:5},()=>ab[Math.random()*ab.length|0]).join('');ref=DB.doc('rooms/'+code);if(!(await ref.get()).exists)break}
+$('#o-go').onclick=async()=>{sfx.click();if(!DB)return p2pCreate();const ab='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';try{let code,ref;for(let t=0;t<6;t++){code=Array.from({length:5},()=>ab[Math.random()*ab.length|0]).join('');ref=DB.doc('rooms/'+code);if(!(await ref.get()).exists)break}
  await ref.set({status:'waiting',size:osz,names:[oname(),''],host:UID,guest:'',ps:[],walls:[],turn:0,over:false,winner:-1,rev:0,left:-1,created:Date.now()});
  join(code,0,ref);showWait(code)}catch(e){toast('Could not create room')}};
-$('#o-jg').onclick=async()=>{sfx.click();const code=$('#ocode').value.trim().toUpperCase();if(code.length<5){sfx.err();toast('Enter the 5-character code');return}
+$('#o-jg').onclick=async()=>{sfx.click();if(!DB)return p2pJoin($('#ocode').value.trim().toUpperCase());const code=$('#ocode').value.trim().toUpperCase();if(code.length<5){sfx.err();toast('Enter the 5-character code');return}
  try{const ref=DB.doc('rooms/'+code),s=await ref.get();if(!s.exists){sfx.err();toast('Room not found');return}const d=s.data();
  if(d.status!=='waiting'||d.guest){sfx.err();toast('Room is full or already started');return}
  await ref.update({guest:UID,names:[d.names[0],oname()],status:'playing'});join(code,1,ref)}catch(e){toast('Could not join room')}};
@@ -225,6 +225,30 @@ function push(){const o=G.online,s={ps:G.ps.map(p=>({r:p.r,c:p.c,w:p.w})),walls:
 function rematch(){const o=G.online;start({size:G.n,names:G.ps.map(p=>p.name),code:o.code,me:o.me,rev:o.rev});push();update()}
 function leaveOnline(){if(!ROOM)return;const r=ROOM,playing=G&&G.online;unsub&&unsub();unsub=null;ROOM=null;try{localStorage.removeItem('q_room')}catch(e){}
  if(playing){G.online=null;r.ref.update({left:r.me}).catch(()=>{})}else r.ref.delete().catch(()=>{})}
+/* ---------- P2P fallback: works on GitHub Pages / any static host (WebRTC via PeerJS) ---------- */
+let peer=null,pconn=null;
+function loadPeer(){return new Promise(res=>{if(window.Peer)return res(true);const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';s.onload=()=>res(!!window.Peer);s.onerror=()=>res(false);document.head.append(s)})}
+const ICE={config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:global.stun.twilio.com:3478'}]}};
+function mkRef(doc){const L=new Set(),snap=()=>({exists:true,data:()=>r.doc}),r={doc,send:null,
+ get:async()=>snap(),
+ update:async p=>{Object.assign(r.doc,p);r.send&&r.send({t:'patch',patch:p});r.emit();if(p.left>=0)setTimeout(()=>{try{peer.destroy()}catch(e){}},400)},
+ delete:async()=>{try{peer&&peer.destroy()}catch(e){}},
+ onSnapshot:cb=>{L.add(cb);setTimeout(()=>cb(snap()),0);return()=>L.delete(cb)},
+ emit:()=>L.forEach(cb=>cb(snap()))};return r}
+function p2pCreate(){const ab='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',code=Array.from({length:5},()=>ab[Math.random()*ab.length|0]).join('');let ref;
+ try{peer=new Peer('qrd-'+code,ICE)}catch(e){toast('Could not start online');return}
+ peer.on('open',()=>{ref=mkRef({status:'waiting',size:osz,names:[oname(),''],host:'p2p',guest:'',ps:[],walls:[],turn:0,over:false,winner:-1,rev:0,left:-1});join(code,0,ref);showWait(code)});
+ peer.on('connection',c=>{if(pconn&&pconn.open){c.on('open',()=>{c.send({t:'full'});setTimeout(()=>c.close(),300)});return}pconn=c;ref.send=m=>pconn.open&&pconn.send(m);
+  c.on('data',m=>{if(m.t==='hello'&&ref.doc.status==='waiting'){Object.assign(ref.doc,{guest:'p2p',names:[ref.doc.names[0],String(m.name||'Player').slice(0,14)],status:'playing'});c.send({t:'doc',doc:ref.doc});ref.emit()}else if(m.t==='patch'){Object.assign(ref.doc,m.patch);ref.emit()}});
+  c.on('close',()=>{if(ref.doc.status==='playing')toast('Opponent disconnected')})});
+ peer.on('error',e=>{if(e.type==='unavailable-id'){try{peer.destroy()}catch(x){}p2pCreate()}else toast('Connection error — try again')})}
+function p2pJoin(code){if(code.length<5){sfx.err();toast('Enter the 5-character code');return}let done=false,ref;
+ try{peer=new Peer(undefined,ICE)}catch(e){toast('Could not start online');return}
+ const fail=m=>{if(done)return;done=true;sfx.err();toast(m);try{peer.destroy()}catch(e){}},tm=setTimeout(()=>fail('Room not found or unreachable'),12000);
+ peer.on('error',e=>fail(e.type==='peer-unavailable'?'Room not found':'Connection error'));
+ peer.on('open',()=>{const c=peer.connect('qrd-'+code,{reliable:true});pconn=c;c.on('open',()=>c.send({t:'hello',name:oname()}));
+  c.on('data',m=>{if(m.t==='full'){clearTimeout(tm);fail('Room is full')}else if(m.t==='doc'&&!ref){clearTimeout(tm);done=true;ref=mkRef(m.doc);ref.send=x=>c.open&&c.send(x);join(code,1,ref)}else if(m.t==='patch'&&ref){Object.assign(ref.doc,m.patch);ref.emit()}});
+  c.on('close',()=>{if(ref&&ref.doc.status==='playing')toast('Opponent disconnected')})})}
 async function tryResume(){let s;try{s=JSON.parse(localStorage.getItem('q_room')||'null')}catch(e){}if(!s||!DB)return;try{const ref=DB.doc('rooms/'+s.code),sn=await ref.get();if(!sn.exists||sn.data().left>=0){localStorage.removeItem('q_room');return}
  join(s.code,s.me,ref);if(sn.data().status==='waiting')showWait(s.code)}catch(e){}}
 </script></body></html>
